@@ -73,19 +73,23 @@ ChipVerify-hardware-challenge/
 
 ### 1️⃣ Debouncer
 
-A classic mechanical-switch debouncer — filters out the noisy, bouncy glitches a raw button press generates before they hit the rest of the digital system.
+A parameterized, counter-based debouncer. `CLK_FREQ_KHZ` sets the clock frequency, and the debounce window is derived as `CLK_FREQ_KHZ × 5` cycles — a fixed **5 ms** settle time regardless of clock speed. A 9-bit counter tracks how long `btn_in` has disagreed with the current `btn_out`, and `9'd511` is used as a one-cycle "pulse" sentinel to flag `btn_pressed` / `btn_released`.
 
 ```mermaid
 stateDiagram-v2
     [*] --> IDLE
-    IDLE --> WAIT: raw_input changes
-    WAIT --> IDLE: input glitches back
-    WAIT --> STABLE: input steady for N cycles
-    STABLE --> IDLE: raw_input changes
-    STABLE --> [*]: clean_output asserted
+    IDLE --> COUNTING: btn_in ≠ btn_out
+    COUNTING --> IDLE: btn_in glitches back to btn_out
+    COUNTING --> UPDATE: counter == DEBOUNCE_CYCLES-1
+    UPDATE --> PULSE: btn_out <= btn_in, counter <= 511
+    PULSE --> IDLE: btn_pressed / btn_released asserted, counter <= 0
 ```
 
-**Core idea:** sample the raw input on every clock edge, and only propagate a change to the output once it has stayed stable for a fixed number of cycles (a simple shift-register / counter-based debounce).
+**Core idea:**
+- While `btn_in == btn_out`, the counter stays at 0 (nothing to debounce).
+- The moment they disagree, the counter starts climbing.
+- Any glitch back to the current output resets the counter — a bounce doesn't count as a stable change.
+- Once the counter survives a full `DEBOUNCE_CYCLES` window, `btn_out` is updated and the counter is parked at `511` for exactly one cycle to fire `btn_pressed`/`btn_released`, then it self-clears back to 0.
 
 📁 [`01_debouncer/`](./01_debouncer)
 
@@ -93,36 +97,55 @@ stateDiagram-v2
 
 ### 2️⃣ Traffic Light FSM
 
-A textbook Moore FSM cycling a traffic signal through its states on a timer.
+A 4-state Moore FSM arbitrating a North-South / East-West intersection, with an `emergency` override that forces all-red.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> RED
-    RED --> GREEN: timer expires
-    GREEN --> YELLOW: timer expires
-    YELLOW --> RED: timer expires
+    [*] --> NS_GREEN
+    NS_GREEN --> NS_YELLOW: count == 30 (NS green for 30 cycles)
+    NS_YELLOW --> EW_GREEN: count == 4 (NS yellow for 5 cycles)
+    EW_GREEN --> EW_YELLOW: count == 29 (EW green for 30 cycles)
+    EW_YELLOW --> NS_GREEN: count == 4 (EW yellow for 5 cycles)
+
+    note right of NS_GREEN
+        emergency = 1 → both lights forced to
+        all-red (2'b00), state and count freeze
+        until emergency deasserts
+    end note
 ```
 
-**Core idea:** each state drives its own light output combinationally, and a countdown counter (loaded with a state-specific duration) triggers each transition.
+**Core idea:** `current_state` drives both light outputs combinationally, and an on-board `count` register times each phase (30 cycles for green, 5 for yellow). When `emergency` is asserted, the combinational logic overrides both `ns_light`/`ew_light` to red and the state register holds in place — no state transition happens until the emergency clears.
 
 📁 [`02_traffic_light_fsm/`](./02_traffic_light_fsm)
 
 ---
 
-### 3️⃣ 16-bit Adder
+### 3️⃣ 16-bit Adder — Brent-Kung Parallel Prefix
 
-A ripple-style 16-bit adder built from smaller full-adder blocks, propagating carry from LSB to MSB.
+Not a plain ripple-carry adder — this is a **Brent-Kung parallel prefix adder**, a logarithmic-depth carry tree (`log₂16 = 4` levels) that computes all carries far faster than a linear ripple chain. The top module registers the combinational sum/carry-out on the clock edge.
 
 ```mermaid
-graph LR
-    A["A[15:0]"] --> ADD["16-bit Adder"]
-    B["B[15:0]"] --> ADD
-    CIN["Cin"] --> ADD
-    ADD --> SUM["Sum[15:0]"]
-    ADD --> COUT["Cout"]
+graph TD
+    A["A[15:0]"] --> GP["Bit-level Generate/Propagate<br/>g0 = A & B, p0 = A ^ B"]
+    B["B[15:0]"] --> GP
+    GP --> L1["Prefix Level 1<br/>(span 1)"]
+    L1 --> L2["Prefix Level 2<br/>(span 2)"]
+    L2 --> L3["Prefix Level 3<br/>(span 4)"]
+    L3 --> L4["Prefix Level 4<br/>(span 8)"]
+    L4 --> CARRY["Carry Chain<br/>carry[i+1] = G[i] | (P[i] & cin)"]
+    CIN["cin"] --> CARRY
+    CARRY --> SUM["sum[i] = p0[i] ^ carry[i]"]
+    CARRY --> COUT["cout = carry[16]"]
+    SUM --> REG["Registered on posedge clk"]
+    COUT --> REG
 ```
 
-**Core idea:** compose the 16-bit add from cascaded smaller adder stages, with carry rippling from the least significant bit through to the most significant, plus a final carry-out flag for overflow detection.
+**Core idea:**
+- **Stage 0:** compute per-bit generate (`g0 = A & B`) and propagate (`p0 = A ^ B`).
+- **Prefix tree (4 levels):** at each level, bits combine with a neighbor `2^level` positions back to build up group generate/propagate signals `G`/`P` — this is what gives Brent-Kung its `O(log n)` carry latency instead of `O(n)`.
+- **Carry chain:** the final-level `G`/`P` values directly produce every carry bit in parallel.
+- **Sum:** each output bit is just `p0[i] ^ carry[i]`.
+- The `adder16` top module wraps the combinational `Brent_kung_16_bit` core and registers `sum`/`cout` on `posedge clk` (with active-low async reset).
 
 📁 [`03_16bit_adder/`](./03_16bit_adder)
 
