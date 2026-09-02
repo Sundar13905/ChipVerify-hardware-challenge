@@ -44,11 +44,11 @@ Think of this as a running logbook of RTL muscle-memory: debouncing a noisy swit
 | 1 | Debouncer | ✅ Done | 🟢 Easy |
 | 2 | Traffic Light FSM | ✅ Done | 🟡 Medium |
 | 3 | 16-bit Adder | ✅ Done | 🟢 Easy |
-| 4 | 4-Channel Countdown Timer | ⏳ In Progress | 🟡 Medium |
+| 4 | 4-Channel Countdown Timer | ✅ Done  | 🟡 Medium |
 | 5 | Vending Machine FSM | ⏳ In Progress | 🔴 Hard |
 
 ```
-Progress: [███████████████░░░░░░░░░] 60% (3/5 solved)
+Progress: [████████████████████░░░░] 80% (4/5 solved)
 ```
 
 ---
@@ -66,6 +66,9 @@ ChipVerify-hardware-challenge/
 ├── 04_countdown_timer/           # 🚧 coming soon
 └── 05_vending_machine_fsm/       # 🚧 coming soon
 ```
+
+---
+
 
 ---
 
@@ -151,9 +154,39 @@ graph TD
 
 ---
 
-### 4️⃣ 4-Channel Countdown Timer 🚧
+### 4️⃣ 4-Channel Countdown Timer
 
-*Coming soon — a multi-channel countdown timer running four independent count sequences in parallel.*
+Four independent 16-bit countdown channels, each with load, run, stop, and a level-sensitive `expired` flag — built as one reusable per-channel module (`timer_channel_opt`) instantiated four times, rather than a single monolithic array. This was iterated through several synthesis-driven optimization passes (area was the tight constraint, not power or timing) before landing on this structure.
+
+```mermaid
+graph TD
+    LE["load_en[3:0]"] --> PE["Priority Encoder<br/>load_grant[i] = load_en[i] & ~(lower bits)"]
+    PE --> CH0["timer_channel_opt #0"]
+    PE --> CH1["timer_channel_opt #1"]
+    PE --> CH2["timer_channel_opt #2"]
+    PE --> CH3["timer_channel_opt #3"]
+    LV["load_val[15:0]"] --> CH0
+    LV --> CH1
+    LV --> CH2
+    LV --> CH3
+    RUN["run[3:0] / stop[3:0]"] --> CH0
+    RUN --> CH1
+    RUN --> CH2
+    RUN --> CH3
+    CH0 --> C0["count0, expired[0]"]
+    CH1 --> C1["count1, expired[1]"]
+    CH2 --> C2["count2, expired[2]"]
+    CH3 --> C3["count3, expired[3]"]
+```
+
+**Core idea:**
+- **Load priority:** a direct AND/OR priority encoder (`load_grant[i] = load_en[i] & ~load_en[i-1] & ...`) — lowest channel index wins on simultaneous loads. Written this way instead of an arithmetic `~x + 1` isolate-lowest-bit trick, since the arithmetic form pulls in an adder for no real benefit at this width.
+- **Zero detection:** `expired = ~(|count)` — a straightforward reduction-NOR, cheaper than a 16-bit equality comparator against a constant.
+- **Enable-flop inference, not a data-mux hold:** the key optimization. `ce = load_grant | (run & ~stop & ~expired)` is computed as its own signal and fed to the register's enable path (`else if (ce) count <= next_count;` with no explicit "else hold" branch). This lets synthesis map straight to the standard-cell library's dedicated enable flip-flop (`sky130_fd_sc_hd__edfxtp_1` in this flow) instead of building a 3-way hold-mux in front of a plain flop — a meaningfully cheaper way to express "do nothing this cycle" in silicon.
+- **Async, active-low reset** (`negedge rst_n` in the sensitivity list) maps directly to the library's reset-capable flop variant, keeping reset out of the combinational cloud entirely rather than synthesizing it as extra gating logic.
+- **Per-channel module instantiation** (`timer_channel_opt #(16)`, ×4) instead of a shared register array — each instance presents synthesis with identical, self-contained logic, making the enable-flop and priority patterns easier for the tool to recognize consistently across all four channels.
+
+📁 [`04_countdown_timer/`](./04_countdown_timer)
 
 ---
 
@@ -179,6 +212,12 @@ Final-year ECE (Honors in Embedded Systems) student | RTL Design & Verification 
 🔗 [GitHub — @Sundar13905](https://github.com/Sundar13905)
 
 ---
+
+<div align="center">
+
+⭐ *If you find this useful, drop a star — more solutions incoming!* ⭐
+
+</div>
 
 <div align="center">
 
