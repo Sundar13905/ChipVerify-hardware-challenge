@@ -3,8 +3,8 @@
 <div align="center">
 
 ![Verilog](https://img.shields.io/badge/HDL-Verilog-blue?style=for-the-badge&logo=v&logoColor=white)
-![Progress](https://img.shields.io/badge/Progress-3%2F5%20Solved-yellow?style=for-the-badge)
-![Status](https://img.shields.io/badge/Status-In%20Progress-orange?style=for-the-badge)
+![Progress](https://img.shields.io/badge/Progress-5%2F5%20Solved-brightgreen?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Complete-brightgreen?style=for-the-badge)
 ![Made with](https://img.shields.io/badge/Made%20with-💙%20%26%20Verilog-informational?style=for-the-badge)
 
 **My RTL solutions to the [ChipVerify Hardware Design Challenges](https://www.chipverify.com/)** — a set of classic digital design problems solved in Verilog, one module at a time.
@@ -23,7 +23,7 @@
   - [2️⃣ Traffic Light FSM](#2️⃣-traffic-light-fsm)
   - [3️⃣ 16-bit Adder](#3️⃣-16-bit-adder)
   - [4️⃣ 4-Channel Countdown Timer](#4️⃣-4-channel-countdown-timer-)
-  - [5️⃣ Vending Machine FSM](#5️⃣-vending-machine-fsm-)
+  - [5️⃣ Vending Machine FSM](#5️⃣-vending-machine-fsm)
 - [Tools Used](#️-tools-used)
 - [About Me](#-about-me)
 
@@ -45,10 +45,10 @@ Think of this as a running logbook of RTL muscle-memory: debouncing a noisy swit
 | 2 | Traffic Light FSM | ✅ Done | 🟡 Medium |
 | 3 | 16-bit Adder | ✅ Done | 🟢 Easy |
 | 4 | 4-Channel Countdown Timer | ✅ Done  | 🟡 Medium |
-| 5 | Vending Machine FSM | ⏳ In Progress | 🔴 Hard |
+| 5 | Vending Machine FSM | ✅ Done | 🔴 Hard |
 
 ```
-Progress: [████████████████████░░░░] 80% (4/5 solved)
+Progress: [████████████████████████] 100% (5/5 solved)
 ```
 
 ---
@@ -58,13 +58,19 @@ Progress: [████████████████████░░░
 ```
 ChipVerify-hardware-challenge/
 ├── 01_debouncer/
-│   └── debouncer.v
+│   ├── debouncer.v
+│   └── debouncer_tb.v
 ├── 02_traffic_light_fsm/
-│   └── traffic_light_fsm.v
+│   ├── Traffic_light_fsm.v
+│   └── traffic_light_tb.v
 ├── 03_16bit_adder/
-│   └── adder_16bit.v
-├── 04_countdown_timer/           # 🚧 coming soon
-└── 05_vending_machine_fsm/       # 🚧 coming soon
+│   └── 16_bit_adder_brent_kung.v
+├── 04_4channel_countdown_timer/
+│   ├── countdown_timer.v
+│   └── countdown_timer_tb.v
+└── 05_Vending_machine_FSM/
+    ├── vending_machine.v
+    └── Vending_machine_fsm_tb.v
 ```
 
 ---
@@ -190,9 +196,36 @@ graph TD
 
 ---
 
-### 5️⃣ Vending Machine FSM 🚧
+### 5️⃣ Vending Machine FSM
 
-*Coming soon — a Moore/Mealy FSM tracking inserted coins, dispensing product, and returning change.*
+A credit-based FSM: the 4-bit `credit` register itself *is* the state — it climbs in 5¢ steps as coins go in, and collapses back to `0` the instant a product is dispensed. Everything else (accepting/rejecting a coin, deciding what to dispense, working out the change) is combinational logic sitting around that one register.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Credit_0c
+    Credit_0c --> Credit_Nc: nickel/dime/quarter in → credit += 5/10/25c
+    Credit_Nc --> Credit_Nc: coin in, but that denomination would overflow credit → coin returned instead
+    Credit_Nc --> Credit_0c: select_a/b/c & credit ≥ price → dispense=1, change fired, credit → 0
+
+    note right of Credit_0c
+        state = the credit register
+        (4 bits, 5c resolution, 0-75c)
+    end note
+    note right of Credit_Nc
+        thresholds: A=30c (≥6 units)
+        B=45c (≥9 units) C=60c (≥12 units)
+        change = credit − price, paid out
+        as up to 1 quarter + 1 dime + 1 nickel
+    end note
+```
+
+**Core idea:**
+- The `credit` register (4 bits, 5¢ resolution, 0–75¢) *is* the FSM's state — there's no separate state encoding, since the accumulated amount already tells the rest of the machine everything it needs to know.
+- `coin_handler` computes the next state combinationally: a nickel/dime/quarter adds 1/2/5 units to `effective_credit`, unless doing so would blow past the 15-unit (75¢) ceiling of the 4-bit counter — in that case the coin is rejected and returned instead of accepted. This is checked per-denomination (`credit == 15` for a nickel, `credit ≥ 14` for a dime, `credit ≥ 11` for a quarter), so a coin is only ever turned away when accepting it would actually overflow.
+- `product_controller` compares `effective_credit` against each product's threshold (A ≥ 6 units/30¢, B ≥ 9/45¢, C ≥ 12/60¢). Once a `select_*` line is asserted with enough credit, it sets `dispense`, drives `next_credit` back to `0`, and a case statement on the leftover credit picks the exact combination of quarter/dime/nickel `change_*` flags owed.
+- `credit_register` and `output_register` are the only sequential elements in the design — one holds the actual state, the other simply re-times the combinational `dispense`/`change_*`/`return_*` outputs by a clock cycle so they come out registered and glitch-free.
+
+📁 [`05_Vending_machine_FSM/`](./05_Vending_machine_FSM)
 
 ---
 
@@ -215,12 +248,6 @@ Final-year ECE (Honors in Embedded Systems) student | RTL Design & Verification 
 
 <div align="center">
 
-⭐ *If you find this useful, drop a star — more solutions incoming!* ⭐
-
-</div>
-
-<div align="center">
-
-⭐ *If you find this useful, drop a star — more solutions incoming!* ⭐
+⭐ *If you find this useful, drop a star!* ⭐
 
 </div>
