@@ -232,7 +232,7 @@ stateDiagram-v2
 ## 🛠️ Tools Used
 
 - **HDL:** Verilog
-- **Simulation:** *(add your simulator here — e.g. Icarus Verilog / ModelSim / Vivado XSim)*
+- **Simulation:** *(on website)*
 - **Reference:** [ChipVerify](https://www.chipverify.com/) design challenge problem statements
 
 ---
